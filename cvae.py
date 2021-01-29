@@ -3,7 +3,7 @@ from model.model import Model
 from model.Optim import Optim
 from model.util.sentence_processor import SentenceProcessor
 from model.util.data_processor import DataProcessor
-from torch.utils.tensorboard import SummaryWriter
+from tensorboardX import SummaryWriter
 import torch
 import torch.nn.functional as F
 import argparse
@@ -11,7 +11,9 @@ import json
 import os
 import time
 import numpy as np
+import os
 
+os.environ['KMP_DUPLICATE_LIB_OK'] = 'True'
 parser = argparse.ArgumentParser()
 parser.add_argument('--trainset_path', dest='trainset_path', default='data/raw/trainset.txt', type=str, help='训练集位置')
 parser.add_argument('--validset_path', dest='validset_path', default='data/raw/validset.txt', type=str, help='验证集位置')
@@ -21,7 +23,8 @@ parser.add_argument('--result_path', dest='result_path', default='result', type=
 parser.add_argument('--print_per_step', dest='print_per_step', default=100, type=int, help='每更新多少次参数summary学习情况')
 parser.add_argument('--log_per_step', dest='log_per_step', default=30000, type=int, help='每更新多少次参数保存模型')
 parser.add_argument('--log_path', dest='log_path', default='log', type=str, help='记录模型位置')
-parser.add_argument('--inference', dest='inference', default=False, type=bool, help='是否测试')  #
+# parser.add_argument('--inference', dest='inference', default=False, type=bool, help='是否测试')  #
+parser.add_argument('--inference', action='store_true', help='是否测试')  #
 parser.add_argument('--max_len', dest='max_len', default=60, type=int, help='测试时最大解码步数')
 parser.add_argument('--model_path', dest='model_path', default='log//', type=str, help='载入模型位置')  #
 parser.add_argument('--seed', dest='seed', default=666, type=int, help='随机种子')  #
@@ -30,7 +33,7 @@ parser.add_argument('--max_epoch', dest='max_epoch', default=20, type=int, help=
 
 args = parser.parse_args()  # 程序运行参数
 
-config = Config()  # 模型配置
+config = Config()  # 模型配置PYTORCH_TRANSFORMERS_CACHE
 
 torch.manual_seed(args.seed)
 if torch.cuda.is_available():
@@ -133,13 +136,13 @@ def main():
                     summary_writer.flush()  # 将缓冲区写入文件
 
                 if global_step % args.log_per_step == 0 \
-                        or (global_step % (2*config.kl_step) - config.kl_step) == config.kl_step // 2:
+                        or (global_step % (2 * config.kl_step) - config.kl_step) == config.kl_step // 2:
                     log_file = os.path.join(log_dir, '{:03d}{:012d}.model'.format(epoch, global_step))
                     model.save_model(epoch, global_step, log_file)
 
                     # 验证集上计算困惑度
                     model.eval()
-                    nll_loss, kld_loss, ppl = valid(model, dp_valid, global_step-1)
+                    nll_loss, kld_loss, ppl = valid(model, dp_valid, global_step - 1)
                     model.train()
                     print('在验证集上的NLL损失为: {:g}, KL损失为: {:g}, PPL为: {:g}'
                           .format(nll_loss, kld_loss, np.exp(ppl)))
@@ -156,13 +159,13 @@ def main():
             model.save_model(epoch, global_step, log_file)
             # 验证集上计算困惑度
             model.eval()
-            nll_loss, kld_loss, ppl = valid(model, dp_valid, global_step-1)
+            nll_loss, kld_loss, ppl = valid(model, dp_valid, global_step - 1)
             print('在验证集上的NLL损失为: {:g}, KL损失为: {:g}, PPL为: {:g}'
                   .format(nll_loss, kld_loss, np.exp(ppl)))
             summary_writer.add_scalar('valid_nll', nll_loss, global_step)
             summary_writer.add_scalar('valid_kld', kld_loss, global_step)
             summary_writer.add_scalar('valid_ppl', np.exp(ppl), global_step)
-            summary_writer.flush()  # 将缓冲区写入文件
+            # summary_writer.flush()  # 将缓冲区写入文件
 
         summary_writer.close()
     else:  # 测试
@@ -174,7 +177,7 @@ def main():
         dp_test = DataProcessor(testset, config.batch_size, sentence_processor, shuffle=False)
 
         model.eval()  # 切换到测试模式，会停用dropout等等
-        nll_loss, kld_loss, ppl = valid(model, dp_test, global_step-1)  # 评估困惑度
+        nll_loss, kld_loss, ppl = valid(model, dp_test, global_step - 1)  # 评估困惑度
         print('在测试集上的NLL损失为: {:g}, KL损失为: {:g}, PPL为: {:g}'
               .format(nll_loss, kld_loss, np.exp(ppl)))
 
@@ -240,7 +243,8 @@ def compute_loss(outputs, labels, masks, global_step):
     masks = masks.reshape(-1)  # [batch*len_decoder]
 
     # nll_loss需要自己求log，它只是把label指定下标的损失取负并拿出来，reduction='none'代表只是拿出来，而不需要求和或者求均值
-    _nll_loss = F.nll_loss(output_vocab.clamp_min(1e-12).log(), labels, reduction='none')  # 每个token的-log似然 [batch*len_decoder]
+    _nll_loss = F.nll_loss(output_vocab.clamp_min(1e-12).log(), labels,
+                           reduction='none')  # 每个token的-log似然 [batch*len_decoder]
     _nll_loss = _nll_loss * masks  # 忽略掉不需要计算损失的token [batch*len_decoder]
 
     nll_loss = _nll_loss.reshape(-1, len_decoder).sum(1)  # 每个batch的nll损失 [batch]
@@ -252,7 +256,7 @@ def compute_loss(outputs, labels, masks, global_step):
 
     # kl退火
     # kld_weight = min(1.0 * global_step / config.kl_step, 1)  # 一次性退火
-    kld_weight = min(1.0 * (global_step % (2*config.kl_step)) / config.kl_step, 1)  # 周期性退火
+    kld_weight = min(1.0 * (global_step % (2 * config.kl_step)) / config.kl_step, 1)  # 周期性退火
 
     # 损失
     loss = nll_loss + kld_weight * kld_loss
