@@ -1,11 +1,11 @@
 import torch
 import torch.nn as nn
-from Embedding import Embedding
-from Encoder import Encoder
-from PriorNet import PriorNet
-from RecognizeNet import RecognizeNet
-from Decoder import Decoder
-from PrepareState import PrepareState
+from model.Embedding import Embedding
+from model.Encoder import Encoder
+from model.PriorNet import PriorNet
+from model.RecognizeNet import RecognizeNet
+from model.Decoder import Decoder
+from model.PrepareState import PrepareState
 
 
 class Model(nn.Module):
@@ -106,6 +106,7 @@ class Model(nn.Module):
                 # output: [1, batch, dim_out]
                 # state: [num_layer, batch, dim_out]
                 output, state = self.decoder(decoder_input, state)
+                assert output.squeeze().equal(state[0][-1])
                 outputs.append(output)
 
             outputs = torch.cat(outputs, 0).transpose(0, 1)  # [batch, seq-1, dim_out]
@@ -189,7 +190,7 @@ class Model(nn.Module):
 
     def load_model(self, path):
         r""" 载入模型 """
-        checkpoint = torch.load(path)
+        checkpoint = torch.load(path, map_location=torch.device('cpu'))
         self.embedding.load_state_dict(checkpoint['embedding'])
         self.post_encoder.load_state_dict(checkpoint['post_encoder'])
         self.response_encoder.load_state_dict(checkpoint['response_encoder'])

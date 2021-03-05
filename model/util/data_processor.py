@@ -1,4 +1,4 @@
-from data_iterator import DataIterator
+from model.util.data_iterator import DataIterator
 import random
 
 
